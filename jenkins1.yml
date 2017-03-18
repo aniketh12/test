@@ -1,0 +1,82 @@
+---
+- hosts: node_vm
+  sudo: yes
+
+  vars:
+    job_name: test1
+    packages:
+      - nginx
+      - openjdk-7-jdk
+      - Jenkins
+  tasks: 
+    - name: Install nginx
+      apt: pkg=nginx state=present
+      become: yes
+    - name: add repo for java 8
+      apt_repository: repo='ppa:webupd8team/java' state=present
+      become: yes
+    - name: set licence selected
+      shell: /bin/echo debconf shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections
+      sudo: yes
+    - name: set licence seen
+      shell: /bin/echo debconf shared/accepted-oracle-license-v1-1 seen true | /usr/bin/debconf-set-selections
+      sudo: yes
+    - name: install java 8
+      apt: name=oracle-java8-installer state=latest update-cache=yes force=yes
+      sudo: yes
+    - name: Download Jenkins
+      shell: wget -q -O - https://pkg.jenkins.io/debian/jenkins-ci.org.key | sudo apt-key add -
+    - name: Execute shell for Jenkins
+      shell: sh -c 'echo deb http://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+      become: yes
+    - name: Update apt-get
+      apt: update_cache=yes
+    - name: Install Jenkins
+      apt: pkg=jenkins state=present
+      become: yes
+    - name: Start Jenkins
+      service: name=jenkins state=started enabled=yes
+    - name: Configure JVM Arguments to skip Jenkins Install wizard
+      lineinfile:
+        dest: /etc/default/jenkins
+        regexp: '^JAVA_ARGS='
+        line: 'JAVA_ARGS="-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"'
+    - name: Restart jenkins
+      service: name=jenkins state=restarted
+    - pause:
+        seconds: 30
+    - name: Get Jenkins Jar
+      get_url: 
+        url: http://localhost:8080/jnlpJars/jenkins-cli.jar
+        dest: /var/lib/jenkins
+    - name: Install Git plugins
+      command: > 
+         java -jar /var/lib/jenkins/jenkins-cli.jar -s http://localhost:8080/ install-plugin git creates=/var/lib/jenkins/plugins/git.jpi
+      with_items: jenkins_plugins
+    - name: Restart jenkins
+      service: name=jenkins state=restarted
+    - pause:
+        seconds: 30
+    - name: Install Git on Node
+      apt: pkg=git state=present
+      become: yes
+    - name: Install nodejs on Node
+      apt: pkg=nodejs state=present
+      become: yes
+    - name: Install npm on Node
+      apt: pkg=npm state=present
+      become: yes
+    - name: Copy config xml to Node
+      copy: src=job.xml dest=./job.xml
+    - name: Create Job on Jenkins
+      shell: "java -jar /var/lib/jenkins/jenkins-cli.jar -s http://localhost:8080/ create-job {{job_name}} < ./job.xml"
+    - name : clone git repo
+      git :
+        repo : https://github.com/jkjabbal/checkbox.io
+        dest : checkbox.io
+    - name : copy analysis tool
+      copy :
+       src : analysis.js
+       dest : ./analysis.js
+    - name: Start Job on Jenkins
+      shell: "java -jar /var/lib/jenkins/jenkins-cli.jar -s http://localhost:8080/ build {{job_name}}"
